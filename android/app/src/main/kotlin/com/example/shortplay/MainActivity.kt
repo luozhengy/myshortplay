@@ -33,6 +33,22 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             downloadsChannelName,
         ).setMethodCallHandler { call, result ->
+            if (call.method == "isDownloadAvailable") {
+                val uriString = call.argument<String>("uri")
+                if (uriString.isNullOrEmpty()) {
+                    result.error("BAD_ARGS", "missing uri", null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    contentResolver.openFileDescriptor(
+                        android.net.Uri.parse(uriString),
+                        "r",
+                    )?.use { result.success(true) } ?: result.success(false)
+                } catch (_: Throwable) {
+                    result.success(false)
+                }
+                return@setMethodCallHandler
+            }
             if (call.method == "decryptToDownloads") {
                 val url = call.argument<String>("url")
                 val key = call.argument<String>("key")
@@ -46,6 +62,7 @@ class MainActivity : FlutterActivity() {
                     var uri: android.net.Uri? = null
                     var descriptor: ParcelFileDescriptor? = null
                     try {
+                        removeExistingDownload(displayName)
                         val values = ContentValues().apply {
                             put(MediaStore.Downloads.DISPLAY_NAME, displayName)
                             put(MediaStore.Downloads.MIME_TYPE, "video/mp4")
@@ -118,6 +135,7 @@ class MainActivity : FlutterActivity() {
                     }
 
                     val published = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        removeExistingDownload(displayName)
                         val values = ContentValues().apply {
                             put(MediaStore.Downloads.DISPLAY_NAME, displayName)
                             put(MediaStore.Downloads.MIME_TYPE, "video/mp4")
@@ -253,6 +271,33 @@ class MainActivity : FlutterActivity() {
                 }
 
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun removeExistingDownload(displayName: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND " +
+            "${MediaStore.Downloads.RELATIVE_PATH} = ?"
+        val selectionArgs = arrayOf(displayName, Environment.DIRECTORY_DOWNLOADS)
+        contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Downloads._ID),
+            selection,
+            selectionArgs,
+            null,
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idIndex)
+                contentResolver.delete(
+                    android.content.ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        id,
+                    ),
+                    null,
+                    null,
+                )
             }
         }
     }

@@ -95,38 +95,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _checkClipboardForShareLink() async {
     if (_handlingShareLink) return;
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim();
-    await Clipboard.setData(const ClipboardData(text: ''));
-    if (text == null || text.isEmpty) return;
-    // 已成功打开过的同一段口令不再重复弹窗（播放返回首页的常见场景）。
-    if (text == _openedClipboardText) return;
-
-    // 设置标志防止重复触发（即使还没真正开始处理）
     _handlingShareLink = true;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      if (text == null || text.isEmpty) return;
+      // 已成功打开过的同一段口令不再重复弹窗（播放返回首页的常见场景）。
+      if (text == _openedClipboardText) return;
 
-    // 直接调用 resolve，由 API 判断是否是分享链接并解析
-    final result = await _shareLinkResolver.resolve(text);
-    if (result == null) {
+      final result = await _shareLinkResolver.resolve(text);
+      if (result == null || !mounted) return;
+
+      // 仅清除确认可解析的分享口令，避免破坏用户复制的普通文本。
+      await Clipboard.setData(const ClipboardData(text: ''));
+      final confirmed = await _showShareConfirmDialog(result.title);
+      if (confirmed != true || !mounted) return;
+
+      // 弹窗确认后记录该口令，避免播放返回首页后又对同一段重复弹窗
+      _openedClipboardText = text;
+      await _resolveAndOpen(result);
+    } finally {
       _handlingShareLink = false;
-      return; // 不是分享链接或解析失败，静默忽略
     }
-
-    if (!mounted) {
-      _handlingShareLink = false;
-      return;
-    }
-
-    final confirmed = await _showShareConfirmDialog(result.title);
-    if (confirmed != true || !mounted) {
-      _handlingShareLink = false;
-      return;
-    }
-
-    // 弹窗确认后记录该口令，避免播放返回首页后又对同一段重复弹窗
-    _openedClipboardText = text;
-    await _resolveAndOpen(result);
-    _handlingShareLink = false;
   }
 
   Future<bool?> _showShareConfirmDialog(String? title) {

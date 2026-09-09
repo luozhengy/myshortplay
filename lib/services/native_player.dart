@@ -77,17 +77,17 @@ class NativePlayer {
 
   Future<void> play() async {
     if (_disposed) return;
-    _channel.invokeMethod('play', {'id': _playerId});
+    await _channel.invokeMethod<void>('play', {'id': _playerId});
   }
 
   Future<void> pause() async {
     if (_disposed) return;
-    _channel.invokeMethod('pause', {'id': _playerId});
+    await _channel.invokeMethod<void>('pause', {'id': _playerId});
   }
 
   Future<void> seek(Duration position) async {
     if (_disposed) return;
-    _channel.invokeMethod('seek', {
+    await _channel.invokeMethod<void>('seek', {
       'id': _playerId,
       'positionMs': position.inMilliseconds,
     });
@@ -95,7 +95,7 @@ class NativePlayer {
 
   Future<void> setVolume(double volume) async {
     if (_disposed) return;
-    _channel.invokeMethod('setVolume', {
+    await _channel.invokeMethod<void>('setVolume', {
       'id': _playerId,
       'volume': volume,
     });
@@ -103,14 +103,14 @@ class NativePlayer {
 
   Future<void> setRate(double rate) async {
     if (_disposed) return;
-    _channel.invokeMethod('setRate', {
+    await _channel.invokeMethod<void>('setRate', {
       'id': _playerId,
       'rate': rate,
     });
   }
 
   static Future<void> setKeepScreenOn(bool on) async {
-    _channel.invokeMethod('setKeepScreenOn', {'on': on});
+    await _channel.invokeMethod<void>('setKeepScreenOn', {'on': on});
   }
 
   Future<void> dispose() async {

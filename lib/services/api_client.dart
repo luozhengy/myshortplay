@@ -50,10 +50,10 @@ class ApiClient {
     Object? lastError;
     for (final candidate in candidates) {
       try {
-        final response = await _dio.get(
-          candidate.path,
-          queryParameters: candidate.query,
-        );
+        final response = await _request(() => _dio.get(
+              candidate.path,
+              queryParameters: candidate.query,
+            ));
         final payload = _decode(response);
         final data = payload['data'];
         Drama? drama;
@@ -90,7 +90,7 @@ class ApiClient {
         if (offset > 0) 'offset': offset.toString(),
       },
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final searchTabs = decoded['search_tabs'] as List? ?? [];
     final dramaTab = searchTabs.firstWhere(
@@ -134,11 +134,11 @@ class ApiClient {
         'https://${ApiConfig.fqVideoHost}${ApiConfig.fqVideoPath}?$queryString';
 
     // 1. 获取算法签名
-    final signResponse = await _dio.post(
-      '${ApiConfig.noveBaseUrl}${ApiConfig.algorithmSign}',
-      data: {'url': fullUrl},
-      options: Options(headers: {'Content-Type': 'application/json'}),
-    );
+    final signResponse = await _request(() => _dio.post(
+          '${ApiConfig.noveBaseUrl}${ApiConfig.algorithmSign}',
+          data: {'url': fullUrl},
+          options: Options(headers: {'Content-Type': 'application/json'}),
+        ));
     final signDecoded = _asJsonMap(signResponse.data);
     if (signDecoded['code'] != 0) {
       throw ApiException('算法签名失败');
@@ -176,11 +176,11 @@ class ApiClient {
       },
     };
 
-    final fqResponse = await _dio.post(
-      fullUrl,
-      data: body,
-      options: Options(headers: fqHeaders),
-    );
+    final fqResponse = await _request(() => _dio.post(
+          fullUrl,
+          data: body,
+          options: Options(headers: fqHeaders),
+        ));
     final fqDecoded = _asJsonMap(fqResponse.data);
     if (fqDecoded['code'] != 0) {
       throw ApiException('获取视频信息失败: ${fqDecoded['message'] ?? ''}');
@@ -231,11 +231,11 @@ class ApiClient {
 
   /// 请求服务端解密spade_a获取AES key
   Future<String> fetchDecryptKey(String spadeA) async {
-    final response = await _dio.post(
-      '${ApiConfig.noveBaseUrl}${ApiConfig.algorithmSpade}',
-      data: {'spade_a': spadeA},
-      options: Options(headers: {'Content-Type': 'application/json'}),
-    );
+    final response = await _request(() => _dio.post(
+          '${ApiConfig.noveBaseUrl}${ApiConfig.algorithmSpade}',
+          data: {'spade_a': spadeA},
+          options: Options(headers: {'Content-Type': 'application/json'}),
+        ));
     final decoded = _asJsonMap(response.data);
     if (decoded['code'] != 0) {
       throw ApiException('解密key失败');
@@ -253,27 +253,11 @@ class ApiClient {
   Future<({String videoId, String? title, String? episodeId})> fetchShareInfo(
     String text,
   ) async {
-    final Response<dynamic> response;
-    try {
-      response = await _dio.post(
-        ApiConfig.myNoveShare,
-        data: {'text': text},
-        options: Options(headers: {'Content-Type': 'application/json'}),
-      );
-    } on DioException catch (e) {
-      // 非 2xx（如签名失败 401）默认会抛 DioException，把状态码和服务端
-      // 返回体一并暴露出来，便于定位（否则只会看到笼统的“打开失败”）。
-      final status = e.response?.statusCode;
-      final serverMsg = e.response?.data is Map
-          ? (e.response!.data as Map)['message']?.toString()
-          : e.response?.data?.toString();
-      throw ApiException(
-        serverMsg?.isNotEmpty == true
-            ? serverMsg!
-            : '请求失败：${e.message ?? e.type.name}',
-        code: status,
-      );
-    }
+    final response = await _request(() => _dio.post(
+          ApiConfig.myNoveShare,
+          data: {'text': text},
+          options: Options(headers: {'Content-Type': 'application/json'}),
+        ));
     final decoded = _asJsonMap(response.data);
     if (decoded['code'] != 0) {
       throw ApiException(
@@ -299,7 +283,7 @@ class ApiClient {
       ApiConfig.noveDirectory,
       {'book_id': seriesId},
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final data = decoded['data'] as Map<String, dynamic>? ?? {};
     final lists = data['lists'] as List? ?? [];
@@ -330,7 +314,7 @@ class ApiClient {
       ApiConfig.noveHome,
       params,
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final data = decoded['data'] as Map<String, dynamic>? ?? {};
     return HomePageResult.fromJson(data);
@@ -355,7 +339,7 @@ class ApiClient {
       ApiConfig.noveRank,
       params,
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final data = decoded['data'] as Map<String, dynamic>? ?? {};
     return RankListResult.fromJson(data);
@@ -377,7 +361,7 @@ class ApiClient {
       ApiConfig.noveRank,
       params,
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final data = decoded['data'] as Map<String, dynamic>? ?? {};
     return NewPlayResult.fromJson(data);
@@ -389,7 +373,7 @@ class ApiClient {
       Uri.parse(ApiConfig.noveBaseUrl).host,
       ApiConfig.notice,
     );
-    final response = await _dio.getUri(uri);
+    final response = await _request(() => _dio.getUri(uri));
     final decoded = _decode(response);
     final data = decoded['data'] as List? ?? [];
     return data.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
@@ -413,6 +397,24 @@ class ApiClient {
         rethrow;
       }
       throw ApiException('解析接口返回失败');
+    }
+  }
+
+  Future<Response<T>> _request<T>(
+    Future<Response<T>> Function() request,
+  ) async {
+    try {
+      return await request();
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      final body = error.response?.data;
+      final serverMessage = body is Map ? body['message']?.toString() : null;
+      throw ApiException(
+        serverMessage?.isNotEmpty == true
+            ? serverMessage!
+            : '请求失败：${error.message ?? error.type.name}',
+        code: status,
+      );
     }
   }
 

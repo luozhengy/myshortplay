@@ -156,9 +156,9 @@ class DownloadService extends ChangeNotifier {
           final epKey = '${dramaId}_$index';
           final savedPath = epMap['localPath'] as String?;
           final localPath = savedPath ?? '${dir.path}/ep_$index.mp4';
-          final fileExists = localPath.startsWith('content://')
-              ? localPath.isNotEmpty
-              : File(localPath).existsSync();
+          final fileExists = await VideoSaveService.isPublishedFileAvailable(
+            localPath,
+          );
           final isCompleted = _completedKeys.contains(epKey) && fileExists;
 
           episodes.add(
@@ -283,7 +283,7 @@ class DownloadService extends ChangeNotifier {
 
     _scheduleSaveGroups();
     notifyListeners();
-    _scheduleNext(dramaId, resolveUrl);
+    _pumpQueue();
   }
 
   /// 暂停某集下载
@@ -306,11 +306,10 @@ class DownloadService extends ChangeNotifier {
     dl.status = DownloadStatus.pending;
     notifyListeners();
     final group = _groups[dl.dramaId];
-    final resolver = _resolvers[dl.key] ??
-        (group != null
-            ? _buildResolver(group)
-            : (Episode ep) async => throw Exception('无法解析下载地址'));
-    _scheduleNext(dl.dramaId, resolver);
+    if (group != null && !_resolvers.containsKey(dl.key)) {
+      _resolvers[dl.key] = _buildResolver(group);
+    }
+    _pumpQueue();
   }
 
   /// 暂停整组下载
@@ -336,11 +335,10 @@ class DownloadService extends ChangeNotifier {
       }
     }
     notifyListeners();
-    final resolver = group.episodes
-            .map((e) => _resolvers[e.key])
-            .firstWhere((r) => r != null, orElse: () => null) ??
-        _buildResolver(group);
-    _scheduleNext(dramaId, resolver);
+    for (final episode in group.episodes) {
+      _resolvers[episode.key] ??= _buildResolver(group);
+    }
+    _pumpQueue();
   }
 
   /// 根据 group 信息构建 resolver（用于 resume 时无缓存 resolver 的兜底）
@@ -395,7 +393,7 @@ class DownloadService extends ChangeNotifier {
       }
     }
     notifyListeners();
-    _scheduleNext(dramaId, resolveUrl);
+    _pumpQueue();
   }
 
   Future<void> deleteGroup(String dramaId) async {
@@ -452,24 +450,22 @@ class DownloadService extends ChangeNotifier {
     } on Exception catch (_) {}
   }
 
-  void _scheduleNext(
-    String dramaId,
-    Future<DownloadResolveResult> Function(Episode) resolveUrl,
-  ) {
-    final group = _groups[dramaId];
-    if (group == null) return;
+  void _pumpQueue() {
+    var slots = _concurrency - _activeKeys.length;
+    if (slots <= 0) return;
 
-    final pending = group.episodes
-        .where(
-          (e) =>
-              e.status == DownloadStatus.pending &&
-              !_activeKeys.contains(e.key),
-        )
-        .toList();
-
-    final slots = _concurrency - _activeKeys.length;
-    for (var i = 0; i < slots && i < pending.length; i++) {
-      _downloadEpisode(pending[i], resolveUrl);
+    for (final group in _groups.values) {
+      for (final episode in group.episodes) {
+        if (slots <= 0) return;
+        if (episode.status != DownloadStatus.pending ||
+            _activeKeys.contains(episode.key) ||
+            _pausedKeys.contains(episode.key)) {
+          continue;
+        }
+        final resolver = _resolvers[episode.key] ?? _buildResolver(group);
+        _downloadEpisode(episode, resolver);
+        slots--;
+      }
     }
   }
 
@@ -502,15 +498,18 @@ class DownloadService extends ChangeNotifier {
           notifyListeners();
         }
 
-        String? savedPath;
+        late final String savedPath;
         if (Platform.isAndroid) {
-          savedPath = await VideoSaveService.decryptToDownloads(
+          final publishedPath = await VideoSaveService.decryptToDownloads(
             cdnUrl: resolved.cdnUrl,
             keyHex: resolved.keyHex,
             dramaName: dl.dramaName,
             episodeName: '第${dl.episode.index}集',
           );
-          if (savedPath == null) throw Exception('无法直接解密到手机的下载目录');
+          if (publishedPath == null) {
+            throw Exception('无法直接解密到手机的下载目录');
+          }
+          savedPath = publishedPath;
         } else {
           final dir = await _dramaDir(dl.dramaId);
           final path = '${dir.path}/ep_${dl.episode.index}.mp4';
@@ -523,6 +522,13 @@ class DownloadService extends ChangeNotifier {
             throw Exception('native decryptToFile 失败: status=$status');
           }
           savedPath = path;
+        }
+
+        if (_pausedKeys.contains(dl.key)) {
+          await VideoSaveService.deletePublishedFile(savedPath);
+          dl.status = DownloadStatus.paused;
+          dl.progress = 0.0;
+          break;
         }
 
         dl.status = DownloadStatus.completed;
@@ -545,8 +551,6 @@ class DownloadService extends ChangeNotifier {
 
     _activeKeys.remove(dl.key);
     notifyListeners();
-    if (dl.status != DownloadStatus.paused) {
-      _scheduleNext(dl.dramaId, resolveUrl);
-    }
+    _pumpQueue();
   }
 }

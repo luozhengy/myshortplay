@@ -69,7 +69,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _pausedByRoute = false;
   bool _isSpeedUp = false;
   int _activePointers = 0;
-  double _playbackSpeed = 1.0;
+  double _playbackSpeed = 1.5;
   double? _seekingPositionMs;
   String _loadingStatusText = '正在准备播放资源';
   List<WorkflowStep> _steps = const [
@@ -98,6 +98,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _didPreloadN3 = false;
 
   StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _completedSub;
 
@@ -166,6 +167,7 @@ class _PlayerPageState extends State<PlayerPage>
     _swipeBlockTimer?.cancel();
     _systemUi.removeListener(_onSystemUiChanged);
     _positionSub?.cancel();
+    _durationSub?.cancel();
     _playingSub?.cancel();
     _completedSub?.cancel();
     if (_player != null) enqueueDispose(_player!);
@@ -426,11 +428,6 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || reqId != _requestId) return;
     }
 
-    if (keyHex.isNotEmpty) {
-      await CryptoNativeChannel.instance.prewarm(cdnUrl, keyHex);
-      if (!mounted || reqId != _requestId) return;
-    }
-
     final player = NativePlayer();
     try {
       await player.create(cdnUrl, keyHex);
@@ -513,7 +510,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (reqId != _requestId) return;
       if (completed) _onAutoNext();
     });
-    player.durationStream.listen((dur) {
+    _durationSub = player.durationStream.listen((dur) {
       if (reqId != _requestId) return;
       durationMsNotifier.value = dur.inMilliseconds;
     });
@@ -605,7 +602,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   void _onSpeedTap() {
-    const speeds = [1.0, 1.25, 1.5, 2.0];
+    const speeds = [1.0, 1.5, 2.0];
     final idx = speeds.indexOf(_playbackSpeed);
     final next = speeds[(idx + 1) % speeds.length];
     _playbackSpeed = next;

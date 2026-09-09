@@ -10,8 +10,9 @@ import 'crypto_native_channel.dart';
 /// 将当前正在播放的视频保存到应用文档目录。
 class VideoSaveService {
   static final Dio _dio = Dio();
-  static const MethodChannel _downloadsChannel =
-      MethodChannel('shortplay/downloads');
+  static const MethodChannel _downloadsChannel = MethodChannel(
+    'shortplay/downloads',
+  );
 
   /// 保存当前正在播放的视频到本地文件
   ///
@@ -28,11 +29,12 @@ class VideoSaveService {
     required String dramaName,
     required String episodeName,
   }) async {
+    String? outputPath;
     try {
       final directory = Directory(await getSaveDirectory());
       if (!directory.existsSync()) await directory.create(recursive: true);
       final fileName = '${_safeName(dramaName)}_${_safeName(episodeName)}.mp4';
-      final outputPath = '${directory.path}/$fileName';
+      outputPath = '${directory.path}/$fileName';
       final outputFile = File(outputPath);
 
       if (keyHex.isNotEmpty) {
@@ -51,7 +53,6 @@ class VideoSaveService {
       }
       if (!outputFile.existsSync()) return null;
 
-      // Keep the Dart-managed copy, then publish another copy to Android Downloads.
       return await publishFileToDownloads(
         sourcePath: outputPath,
         dramaName: dramaName,
@@ -60,6 +61,11 @@ class VideoSaveService {
     } catch (e) {
       print('保存视频失败: $e');
       return null;
+    } finally {
+      if (Platform.isAndroid && outputPath != null) {
+        final temporaryFile = File(outputPath);
+        if (temporaryFile.existsSync()) await temporaryFile.delete();
+      }
     }
   }
 
@@ -119,13 +125,28 @@ class VideoSaveService {
       return true;
     }
     try {
-      return await _downloadsChannel.invokeMethod<bool>(
-            'deleteFromDownloads',
-            {'uri': filePath},
-          ) ??
+      return await _downloadsChannel.invokeMethod<bool>('deleteFromDownloads', {
+            'uri': filePath,
+          }) ??
           false;
     } on PlatformException catch (e) {
       print('删除公共下载文件失败: ${e.message}');
+      return false;
+    }
+  }
+
+  static Future<bool> isPublishedFileAvailable(String filePath) async {
+    if (!filePath.startsWith('content://')) {
+      return File(filePath).exists();
+    }
+    if (!Platform.isAndroid) return false;
+    try {
+      return await _downloadsChannel.invokeMethod<bool>('isDownloadAvailable', {
+            'uri': filePath,
+          }) ??
+          false;
+    } on PlatformException catch (e) {
+      print('检查公共下载文件失败: ${e.message}');
       return false;
     }
   }
